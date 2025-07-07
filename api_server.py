@@ -1,16 +1,22 @@
-import pandas as pd
 from flask import Flask, request, jsonify
+import pandas as pd
 
-# Load your Excel file
-file_path = "/Users/luketorrey/Documents/ai-acquisition-tool v2/valliance_pipeline.xlsx"
+app = Flask(__name__)
+
+# ✅ Correct file path for cloud deployment
+file_path = "valliance_pipeline.xlsx"
+
+# Sheets to read
 sheets = ["M&A", "M&A SL"]
+
+# Load both sheets into a dictionary of DataFrames
 dfs = pd.read_excel(file_path, sheet_name=sheets, engine="openpyxl")
 
-# Clean up column names for all sheets
+# Clean up column names
 for sheet_name, df in dfs.items():
     df.columns = df.columns.str.strip()
 
-# Your filtering function
+# Define search function
 def search_companies(
     df,
     company_name=None,
@@ -52,40 +58,40 @@ def search_companies(
 
     return filtered
 
-# Initialize Flask app
-app = Flask(__name__)
-
 @app.route("/query", methods=["POST"])
-def query():
-    # Get JSON payload
+def query_companies():
+    # Parse JSON payload
     data = request.get_json()
 
+    # Default to M&A SL sheet for searches
     df_ma_sl = dfs["M&A SL"]
-    df_ma_sl.columns = df_ma_sl.columns.str.strip()
 
-    # Extract filters from the request
-    filters = {
-        "company_name": data.get("company_name"),
-        "location": data.get("location"),
-        "employees_min": data.get("employees_min"),
-        "employees_max": data.get("employees_max"),
-        "revenue_min": data.get("revenue_min"),
-        "revenue_max": data.get("revenue_max"),
-        "keyword": data.get("keyword")
-    }
+    results = search_companies(
+        df_ma_sl,
+        company_name=data.get("company_name"),
+        location=data.get("location"),
+        employees_min=data.get("employees_min"),
+        employees_max=data.get("employees_max"),
+        revenue_min=data.get("revenue_min"),
+        revenue_max=data.get("revenue_max"),
+        keyword=data.get("keyword"),
+    )
 
-    # Run search
-    results = search_companies(df_ma_sl, **filters)
+    if results.empty:
+        return jsonify([])
 
-    # Only return selected columns for clarity
-    if not results.empty:
-        results = results[
-            ["Company Name", "Location", "Employees", "Revenue (USD M)", "Notes"]
-        ]
+    # Prepare clean JSON output
+    output = results[[
+        "Company Name",
+        "Employees",
+        "Location",
+        "Revenue (USD M)",
+        "Notes"
+    ]].to_dict(orient="records")
 
-    # Convert to JSON
-    results_json = results.to_dict(orient="records")
-    return jsonify(results_json)
+    return jsonify(output)
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
