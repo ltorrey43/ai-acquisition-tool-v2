@@ -1,97 +1,80 @@
 from flask import Flask, request, jsonify
-import pandas as pd
+import requests
+import os
 
 app = Flask(__name__)
 
-# ✅ Correct file path for cloud deployment
-file_path = "valliance_pipeline.xlsx"
-
-# Sheets to read
-sheets = ["M&A", "M&A SL"]
-
-# Load both sheets into a dictionary of DataFrames
-dfs = pd.read_excel(file_path, sheet_name=sheets, engine="openpyxl")
-
-# Clean up column names
-for sheet_name, df in dfs.items():
-    df.columns = df.columns.str.strip()
-
-# Define search function
-def search_companies(
-    df,
-    company_name=None,
-    location=None,
-    employees_min=None,
-    employees_max=None,
-    revenue_min=None,
-    revenue_max=None,
-    keyword=None
-):
-    filtered = df.copy()
-
-    if company_name:
-        filtered = filtered[
-            filtered["Company Name"].str.contains(company_name, case=False, na=False)
-        ]
-
-    if location:
-        filtered = filtered[
-            filtered["Location"].str.contains(location, case=False, na=False)
-        ]
-
-    if employees_min is not None:
-        filtered = filtered[filtered["Employees"] >= employees_min]
-
-    if employees_max is not None:
-        filtered = filtered[filtered["Employees"] <= employees_max]
-
-    if revenue_min is not None:
-        filtered = filtered[filtered["Revenue (USD M)"] >= revenue_min]
-
-    if revenue_max is not None:
-        filtered = filtered[filtered["Revenue (USD M)"] <= revenue_max]
-
-    if keyword:
-        filtered = filtered[
-            filtered["Notes"].str.contains(keyword, case=False, na=False)
-        ]
-
-    return filtered
+# Load API Key from Render environment
+HARMONIC_API_KEY = os.environ.get("HARMONIC_API_KEY")
 
 @app.route("/query", methods=["POST"])
 def query_companies():
-    # Parse JSON payload
     data = request.get_json()
 
-    # Default to M&A SL sheet for searches
-    df_ma_sl = dfs["M&A SL"]
+    # Build query parameters for Harmonic API
+    params = {}
 
-    results = search_companies(
-        df_ma_sl,
-        company_name=data.get("company_name"),
-        location=data.get("location"),
-        employees_min=data.get("employees_min"),
-        employees_max=data.get("employees_max"),
-        revenue_min=data.get("revenue_min"),
-        revenue_max=data.get("revenue_max"),
-        keyword=data.get("keyword"),
-    )
+    if data.get("company_name"):
+        params["website_domain"] = data["company_name"]
 
-    if results.empty:
-        return jsonify([])
+    if data.get("location"):
+        params["hq_locations"] = data["location"]
 
-    # Prepare clean JSON output
-    output = results[[
-        "Company Name",
-        "Employees",
-        "Location",
-        "Revenue (USD M)",
-        "Notes"
-    ]].to_dict(orient="records")
+    params["size"] = 5  # Adjust as desired
 
-    return jsonify(output)
+    harmonic_url = "https://api.harmonic.ai/companies"
+
+    headers = {
+        "accept": "application/json",
+        "apikey": HARMONIC_API_KEY
+    }
+
+    # Send POST request
+    response = requests.post(harmonic_url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        return jsonify({"error": f"Harmonic API error: {response.text}"}), 500
+
+    harmonic_data = response.json()
+
+    companies = harmonic_data.get("data", [])
+
+    transformed = []
+    for c in companies:
+        transformed.append({
+            "Company Name": c.get("legal_name"),
+            "Description": c.get("description"),
+            "Location": {
+                "City": c.get("city"),
+                "State": c.get("state"),
+                "Country": c.get("country")
+            },
+            "Website": c.get("website"),
+            "LinkedIn": c.get("linkedin"),
+            "Headcount": c.get("headcount"),
+            "Funding Total (USD M)": c.get("funding_total_usd_millions"),
+            "Stage": c.get("stage"),
+            "Last Funding Type": c.get("last_funding_type"),
+            "Last Funding Date": c.get("last_funding_date"),
+            "Last Funding Round Total (USD M)": c.get("last_funding_round_total_usd_millions"),
+            "Last Valuation (USD M)": c.get("last_valuation_usd_millions"),
+            "Investors": c.get("investors"),
+            "Customer Type": c.get("customer_type"),
+            "Market Vertical Tags": c.get("market_vertical_tags"),
+            "Market Sub-Vertical Tags": c.get("market_sub_vertical_tags"),
+            "Technology Tags": c.get("technology_tags"),
+            "Company Highlights": c.get("company_highlights"),
+            "Founders & CEOs": c.get("founders_and_ceos"),
+            "Leadership's Prior Experiences": c.get("leadership_prior_experiences"),
+            "Primary Contact Name": c.get("primary_contact_name"),
+            "Primary Contact Email": c.get("primary_contact_email"),
+            "Company Emails": c.get("company_emails"),
+            "Team Emails": c.get("team_emails"),
+            "Relevance Score": c.get("relevance_score"),
+        })
+
+    return jsonify(transformed)
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
