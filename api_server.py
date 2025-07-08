@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 import requests
 import os
 
+print("HARMONIC_API_KEY from env:", os.environ.get("HARMONIC_API_KEY"))
+
 app = Flask(__name__)
 
 # Load API Key from Render environment
